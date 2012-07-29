@@ -149,23 +149,27 @@ module ResqueScheduler
   # Insertion if O(log(n)).
   # Returns true if it's the first job to be scheduled at that time, else false
   def delayed_push(timestamp, item)
-    # First add this item to the list for this timestamp
-    redis.rpush("delayed:#{timestamp.to_i}", encode(item))
+    encoded_item = encode(item)
+    existing_delayed_items = redis.zrangebyscore(:delayed_queue_schedule, timestamp.to_i, timestamp.to_i)
+    if existing_delayed_items.none?{ |edi| edi == encoded_item }
+      # First add this item to the list for this timestamp
+      redis.rpush("delayed:#{timestamp.to_i}", encoded_item)
 
-    # Now, add this timestamp to the zsets.  The score and the value are
-    # the same since we'll be querying by timestamp, and we don't have
-    # anything else to store.
-    redis.zadd :delayed_queue_schedule, timestamp.to_i, timestamp.to_i
+      # Now, add this timestamp to the zsets.  The score and the value are
+      # the same since we'll be querying by timestamp, and we don't have
+      # anything else to store.
+      redis.zadd(:delayed_queue_schedule, timestamp.to_i, encoded_item)
+    end
   end
 
   # Returns an array of timestamps based on start and count
   def delayed_queue_peek(start, count)
-    Array(redis.zrange(:delayed_queue_schedule, start, start+count-1)).collect{|x| x.to_i}
+    Array(redis.zrange(:delayed_queue_schedule, start, start+count-1, :withscores => true)).collect{ |item, timestamp| timestamp.to_i }
   end
 
   # Returns the size of the delayed queue schedule
   def delayed_queue_schedule_size
-    redis.zcard :delayed_queue_schedule
+    redis.zcard(:delayed_queue_schedule)
   end
 
   # Returns the number of jobs for a given timestamp in the delayed queue schedule
@@ -176,17 +180,17 @@ module ResqueScheduler
   # Returns an array of delayed items for the given timestamp
   def delayed_timestamp_peek(timestamp, start, count)
     if 1 == count
-      r = list_range "delayed:#{timestamp.to_i}", start, count
+      r = list_range("delayed:#{timestamp.to_i}", start, count)
       r.nil? ? [] : [r]
     else
-      list_range "delayed:#{timestamp.to_i}", start, count
+      list_range("delayed:#{timestamp.to_i}", start, count)
     end
   end
 
   # Returns the next delayed queue timestamp
   # (don't call directly)
   def next_delayed_timestamp(at_time=nil)
-    items = redis.zrangebyscore :delayed_queue_schedule, '-inf', (at_time || Time.now).to_i, :limit => [0, 1]
+    items = redis.zrangebyscore(:delayed_queue_schedule, '-inf', (at_time || Time.now).to_i, :limit => [0, 1])
     timestamp = items.nil? ? nil : Array(items).first
     timestamp.to_i unless timestamp.nil?
   end
@@ -206,11 +210,11 @@ module ResqueScheduler
 
   # Clears all jobs created with enqueue_at or enqueue_in
   def reset_delayed_queue
-    Array(redis.zrange(:delayed_queue_schedule, 0, -1)).each do |item|
-      redis.del "delayed:#{item}"
+    redis.zrange(:delayed_queue_schedule, 0, -1, :withscores => true).each do |item, timestamp|
+      redis.del("delayed:#{timestamp.to_i}")
     end
 
-    redis.del :delayed_queue_schedule
+    redis.del(:delayed_queue_schedule)
   end
 
   # Given an encoded item, remove it from the delayed_queue
@@ -221,7 +225,7 @@ module ResqueScheduler
     destroyed = 0
     search = encode(job_to_hash(klass, args))
     Array(redis.keys("delayed:*")).each do |key|
-      destroyed += redis.lrem key, 0, search
+      destroyed += redis.lrem(key, 0, search)
     end
     destroyed
   end
@@ -233,14 +237,14 @@ module ResqueScheduler
   # timestamp
   def remove_delayed_job_from_timestamp(timestamp, klass, *args)
     key = "delayed:#{timestamp.to_i}"
-    count = redis.lrem key, 0, encode(job_to_hash(klass, args))
+    count = redis.lrem(key, 0, encode(job_to_hash(klass, args)))
     clean_up_timestamp(key, timestamp)
     count
   end
 
   def count_all_scheduled_jobs
     total_jobs = 0
-    Array(redis.zrange(:delayed_queue_schedule, 0, -1)).each do |timestamp|
+    Array(redis.zrange(:delayed_queue_schedule, 0, -1, :withscores => true)).each do |item, timestamp|
       total_jobs += redis.llen("delayed:#{timestamp}").to_i
     end
     total_jobs
@@ -258,11 +262,11 @@ module ResqueScheduler
 
     def clean_up_timestamp(key, timestamp)
       # If the list is empty, remove it.
-      redis.watch key
+      redis.watch(key)
       if 0 == redis.llen(key).to_i
         redis.multi do
-          redis.del key
-          redis.zrem :delayed_queue_schedule, timestamp.to_i
+          redis.del(key)
+          redis.zrem(:delayed_queue_schedule, timestamp.to_i)
         end
       else
         redis.unwatch
