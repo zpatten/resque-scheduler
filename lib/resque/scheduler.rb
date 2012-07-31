@@ -158,7 +158,6 @@ module Resque
         if timestamp = Resque.next_delayed_timestamp(at_time)
           procline "Processing Delayed Items"
           while !timestamp.nil?
-            puts("TIMESTAMP == #{timestamp}")
             enqueue_delayed_items_for_timestamp(timestamp)
             timestamp = Resque.next_delayed_timestamp(at_time)
           end
@@ -167,20 +166,16 @@ module Resque
 
       # Enqueues all delayed jobs for a timestamp
       def enqueue_delayed_items_for_timestamp(timestamp)
-        puts("ENTER: enqueue_delayed_items_for_timestamp")
         item = nil
         begin
           handle_shutdown do
-            puts("AFTER: handle_shutdown")
             if item = Resque.next_item_for_timestamp(timestamp)
-              puts("AFTER: Resque.next_item_for_timestamp")
               log "queuing #{item['class']} [delayed]"
               handle_errors { enqueue_from_config(item) }
             end
           end
         # continue processing until there are no more ready items in this timestamp
         end while !item.nil?
-        puts("EXIT: enqueue_delayed_items_for_timestamp")
       end
 
       def handle_shutdown

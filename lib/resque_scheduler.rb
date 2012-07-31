@@ -191,9 +191,7 @@ module ResqueScheduler
   # (don't call directly)
   def next_delayed_timestamp(at_time=nil)
     items = redis.zrangebyscore(:delayed_queue_schedule, '-inf', (at_time || Time.now).to_i, :withscores => true, :limit => [0, 1]).collect{ |item, timestamp| timestamp.to_i }
-    puts "ITEMS: #{items.inspect}"
     timestamp = items.nil? ? nil : Array(items).first
-    puts "TIMESTAMP: #{timestamp.inspect}"
     timestamp.to_i unless timestamp.nil?
   end
 
@@ -203,10 +201,8 @@ module ResqueScheduler
   def next_item_for_timestamp(timestamp)
     key = "delayed:#{timestamp.to_i}"
 
-    puts "KEY: #{key.inspect}"
     encoded_item = redis.lpop(key)
     item = decode(encoded_item)
-    puts "ITEM: #{item.inspect}"
 
     # If the list is empty, remove it.
     clean_up_job(key, encoded_item)
@@ -267,10 +263,8 @@ module ResqueScheduler
     end
 
     def clean_up_job(key, job)
-      puts "clean_up_job: #{key} | #{job}"
       # If the list is empty, remove it.
       redis.watch(key)
-      puts "redis.llen == #{redis.llen(key).to_i}"
       if 0 == redis.llen(key).to_i
         redis.multi do
           redis.del(key)
