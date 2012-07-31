@@ -190,8 +190,10 @@ module ResqueScheduler
   # Returns the next delayed queue timestamp
   # (don't call directly)
   def next_delayed_timestamp(at_time=nil)
-    items = redis.zrangebyscore(:delayed_queue_schedule, '-inf', (at_time || Time.now).to_i, :limit => [0, 1])
+    items = redis.zrangebyscore(:delayed_queue_schedule, '-inf', (at_time || Time.now).to_i, :withscores => true, :limit => [0, 1]).collect{ |item, timestamp| timestamp.to_i }
+    puts "ITEMS: #{items.inspect}"
     timestamp = items.nil? ? nil : Array(items).first
+    puts "TIMESTAMP: #{timestamp.inspect}"
     timestamp.to_i unless timestamp.nil?
   end
 
@@ -201,10 +203,13 @@ module ResqueScheduler
   def next_item_for_timestamp(timestamp)
     key = "delayed:#{timestamp.to_i}"
 
-    item = decode redis.lpop(key)
+    puts "KEY: #{key.inspect}"
+    encoded_item = redis.lpop(key)
+    item = decode(encoded_item)
+    puts "ITEM: #{item.inspect}"
 
     # If the list is empty, remove it.
-    clean_up_timestamp(key, timestamp)
+    clean_up_job(key, encoded_item)
     item
   end
 
@@ -237,8 +242,9 @@ module ResqueScheduler
   # timestamp
   def remove_delayed_job_from_timestamp(timestamp, klass, *args)
     key = "delayed:#{timestamp.to_i}"
-    count = redis.lrem(key, 0, encode(job_to_hash(klass, args)))
-    clean_up_timestamp(key, timestamp)
+    item = encode(job_to_hash(klass, args))
+    count = redis.lrem(key, 0, item)
+    clean_up_job(key, item)
     count
   end
 
@@ -260,18 +266,21 @@ module ResqueScheduler
       {:class => klass.to_s, :args => args, :queue => queue}
     end
 
-    def clean_up_timestamp(key, timestamp)
+    def clean_up_job(key, job)
+      puts "clean_up_job: #{key} | #{job}"
       # If the list is empty, remove it.
       redis.watch(key)
+      puts "redis.llen == #{redis.llen(key).to_i}"
       if 0 == redis.llen(key).to_i
         redis.multi do
           redis.del(key)
-          redis.zrem(:delayed_queue_schedule, timestamp.to_i)
+          redis.zrem(:delayed_queue_schedule, job)
         end
       else
         redis.unwatch
       end
     end
+
     def validate_job!(klass)
       if klass.to_s.empty?
         raise Resque::NoClassError.new("Jobs must be given a class.")
