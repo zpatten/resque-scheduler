@@ -155,27 +155,27 @@ module Resque
       # Handles queueing delayed items
       # at_time - Time to start scheduling items (default: now).
       def handle_delayed_items(at_time=nil)
-        if timestamp = Resque.next_delayed_timestamp(at_time)
+        if job = Resque.next_delayed_job(at_time)
           procline "Processing Delayed Items"
-          while !timestamp.nil?
-            enqueue_delayed_items_for_timestamp(timestamp)
-            timestamp = Resque.next_delayed_timestamp(at_time)
+          while !job.nil?
+            enqueue_delayed_items
+            job = Resque.next_delayed_job(at_time)
           end
         end
       end
 
       # Enqueues all delayed jobs for a timestamp
-      def enqueue_delayed_items_for_timestamp(timestamp)
-        item = nil
+      def enqueue_delayed_items
+        job = nil
         begin
           handle_shutdown do
-            if item = Resque.next_item_for_timestamp(timestamp)
-              log "queuing #{item['class']} [delayed]"
-              handle_errors { enqueue_from_config(item) }
+            if job = Resque.next_job
+              log "queuing #{job['class']} [delayed]"
+              handle_errors { enqueue_from_config(job) }
             end
           end
         # continue processing until there are no more ready items in this timestamp
-        end while !item.nil?
+        end while !job.nil?
       end
 
       def handle_shutdown
