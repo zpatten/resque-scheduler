@@ -155,7 +155,7 @@ module ResqueScheduler
 
   # Returns an array of timestamps based on start and count
   def delayed_queue_peek(start, count)
-    Array(redis.zrange(:delayed_queue_schedule, start, start+count-1, :withscores => true)).collect{ |item, timestamp| timestamp.to_i }
+    Array(redis.zrange(:delayed_queue_schedule, start, start+count-1, :withscores => true)).collect{ |job, timestamp| timestamp.to_i }
   end
 
   # Returns the size of the delayed queue schedule
@@ -165,17 +165,12 @@ module ResqueScheduler
 
   # Returns the number of jobs for a given timestamp in the delayed queue schedule
   def delayed_timestamp_size(timestamp)
-    redis.llen("delayed:#{timestamp.to_i}").to_i
+    Array(redis.zrange(:delayed_queue_schedule, timestamp.to_i, timestamp.to_i)).count
   end
 
-  # Returns an array of delayed items for the given timestamp
+  # Returns an array of delayed jobs for the given timestamp
   def delayed_timestamp_peek(timestamp, start, count)
-    if 1 == count
-      r = list_range("delayed:#{timestamp.to_i}", start, count)
-      r.nil? ? [] : [r]
-    else
-      list_range("delayed:#{timestamp.to_i}", start, count)
-    end
+    Array(redis.zrange(:delayed_queue_schedule, timestamp.to_i, timestamp.to_i)).collect{ |job, timestamp| job }.slice(start, count)
   end
 
   # Returns the next delayed queue timestamp
@@ -197,7 +192,7 @@ module ResqueScheduler
 
   # Clears all jobs created with enqueue_at or enqueue_in
   def reset_delayed_queue
-    redis.zrange(:delayed_queue_schedule, 0, -1, :withscores => true).each do |item, timestamp|
+    redis.zrange(:delayed_queue_schedule, 0, -1, :withscores => true).each do |job, timestamp|
       redis.del("delayed:#{timestamp.to_i}")
     end
 
